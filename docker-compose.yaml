@@ -1,0 +1,13 @@
+name: frp-controller
+
+services:
+  cache:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    volumes:
+      - cache:/data
+    ports:
+      - "6379:6379"
+
+volumes:
+  cache:
