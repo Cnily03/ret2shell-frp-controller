@@ -11,7 +11,7 @@ services:
 
   app:
     build: .
-    image: frp-controller:latest
+    image: ghcr.io/cnily03/ret2shell-frp-controller:latest
     restart: unless-stopped
     depends_on:
       - cache
