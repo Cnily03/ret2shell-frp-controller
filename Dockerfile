@@ -9,6 +9,9 @@ WORKDIR /app
 COPY package.json .
 COPY pnpm-lock.yaml .
 
+ARG REGISTRY_URL
+RUN [ -n "$REGISTRY_URL" ] && pnpm config set registry "$REGISTRY_URL"
+
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --prod --frozen-lockfile
 
 FROM oven/bun:1-slim AS bun
@@ -26,6 +29,8 @@ COPY tsconfig.json .
 COPY src src/
 COPY ecosystem.config.* .
 
-EXPOSE 3000
+ENV NODE_ENV=production
 
 CMD [ "pm2-runtime", "start", "ecosystem.config.cjs" ]
+
+EXPOSE 3000
