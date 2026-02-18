@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import z from "zod";
 import { auth } from "@/mw/auth";
-import { delete_traffic, schemaService, update_traffic } from "@/traffic";
+import { delete_traffic, schemaService, start_cleanup_dead_ports, update_traffic } from "@/traffic";
 
 const app = new Hono();
 
@@ -45,5 +45,7 @@ app.onError((e, c) => {
     return c.text("internal server error", 500);
   }
 });
+
+start_cleanup_dead_ports().catch(console.error);
 
 export default app;
