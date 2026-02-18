@@ -422,5 +422,5 @@ export async function start_cleanup_dead_ports() {
     const next_tick = Math.max(0, INTERVAL - (Date.now() - last_cleanup_time));
     setTimeout(ticker, next_tick);
   };
-  setTimeout(ticker, INTERVAL);
+  setTimeout(ticker, 0);
 }
