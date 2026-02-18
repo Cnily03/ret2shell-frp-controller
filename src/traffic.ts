@@ -245,6 +245,13 @@ async function update_traffic_unsafe(node_name: string, service: Service) {
       };
 
       // create config
+      console.log(
+        `Creating proxy config: ${[
+          `client_id=${create_params.client_id}`,
+          `server_id=${create_params.server_id}`,
+          `ports=${service.ports.map((p) => `${p.node_port}/${p.service_type}`).join(",")}`,
+        ].join(", ")}`
+      );
       await api.create_proxy_config(create_params);
 
       // occupy ports
@@ -345,6 +352,7 @@ export async function delete_traffic(traffic_id: string) {
     remote_addr: cached_addr?.remote_addr,
   };
 
+  console.log(`Deleting traffic: ${traffic_id}`);
   if (cached_conf && cached_addr) {
     const server_id = cached_conf.server_id;
     const remote_ports = cached_addr.remote_ports;
