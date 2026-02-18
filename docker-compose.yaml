@@ -6,8 +6,19 @@ services:
     restart: unless-stopped
     volumes:
       - cache:/data
+    # ports:
+    #   - "6379:6379"
+
+  app:
+    build: .
+    image: frp-controller:latest
+    restart: unless-stopped
+    depends_on:
+      - cache
     ports:
-      - "6379:6379"
+      - "3000:3000"
+    volumes:
+      - ./config.toml:/app/config.toml:ro
 
 volumes:
   cache:
