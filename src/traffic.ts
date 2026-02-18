@@ -1,4 +1,5 @@
 import { Mutex } from "async-mutex";
+import { HTTPException } from "hono/http-exception";
 import { customAlphabet } from "nanoid";
 import z from "zod";
 import type { CreateConfigParam } from "@/api";
@@ -274,18 +275,35 @@ async function update_traffic_unsafe(node_name: string, service: Service) {
       delta_now(SVC_EXPIRE_AT)
     );
 
-    // get remote address
-    const details = await Promise.all(
-      proxy_lists.map((proxy) =>
-        api
-          .get_proxy_config({
-            client_id: proxy.client_id,
-            server_id: proxy.server_id,
-            name: proxy.name,
-          })
-          .then((res) => res.body)
-      )
-    );
+    async function wait_ready(retry = 5, interval = 500) {
+      for (let i = 0; i < retry; i++) {
+        // get remote address
+        const details = await Promise.all(
+          proxy_lists.map((proxy) =>
+            api
+              .get_proxy_config({
+                client_id: proxy.client_id,
+                server_id: proxy.server_id,
+                name: proxy.name,
+              })
+              .then((res) => res.body)
+          )
+        );
+        const is_all_status_running = details.every((detail) => detail.working_status.status === "running");
+        if (!is_all_status_running) {
+          await sleep(interval);
+        } else {
+          return details;
+        }
+      }
+      return null;
+    }
+
+    const details = await wait_ready();
+    if (!details) {
+      await delete_traffic(svc.traffic).catch(void 0);
+      throw new HTTPException(503, { message: "cannot start traffic" });
+    }
 
     const remote_addr = new Map<string, string>(); // name:port/service_type -> remote_addr
 
