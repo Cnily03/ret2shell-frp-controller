@@ -12,7 +12,11 @@ const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 21);
 
 const cache = new Cache(CONFIG.cache.url);
 
+// * no expire, cleanup and close frp proxy if traffic deleted
+// working:{traffic_id} -> { client_id, server_id, name }[]
+// * no expire, cleanup if working deleted
 // port:{server_id}:{port} -> traffic_id
+// * traffic will auto expire after lifetime
 // traffic:{traffic_id}:conf -> { client_id, server_id, config }
 // traffic:{traffic_id}:addr -> { remote_ports: number[], remote_addr: string[] }
 
@@ -240,29 +244,28 @@ async function update_traffic_unsafe(node_name: string, service: Service) {
         client_id: CLIENT_ID,
         server_id: picked_server_id,
         config: to_camel({ proxies }),
-        // if already exists cached_conf, overwrite it
-        overwrite: true,
+        // if already exists cached_conf, do not overwrite it
+        overwrite: false,
       };
 
       // create config
       console.log(
-        `Creating proxy config: ${[
+        `Updating proxy config: ${[
           `client_id=${create_params.client_id}`,
           `server_id=${create_params.server_id}`,
           `ports=${service.ports.map((p) => `${p.node_port}/${p.service_type}`).join(",")}`,
         ].join(", ")}`
       );
-      await api.create_proxy_config(create_params);
+      await api.create_proxy_config(create_params).catch(void 0);
 
       // occupy ports
       const occupied_ports = proxies
         .filter((p) => p.type !== "http" && p.remote_port)
         .map((p) => p.remote_port!) as number[];
-      const delta = delta_now(SVC_EXPIRE_AT);
       await Promise.all(
         occupied_ports.map((p) => {
-          // set port:{traffic_id}:{port} -> traffic_id, with expire
-          return cache.at("port").at(ctx.server_id).at(p).set(ctx.traffic_id, delta);
+          // set port:{traffic_id}:{port} -> traffic_id
+          return cache.at("port").at(ctx.server_id).at(p).set(ctx.traffic_id);
         })
       );
       return [create_params.config, occupied_ports];
@@ -271,8 +274,21 @@ async function update_traffic_unsafe(node_name: string, service: Service) {
     const proxy_lists = await api.list_all_proxy_configs(`${NAME_PREFIX}:`);
     if (!proxy_lists.length) throw new Error("Failed to list proxy configs after creation");
 
+    // set working:{traffic_id} -> { client_id, server_id, name }, with no expire, cleanup if working deleted
+    await cache
+      .at("working")
+      .at(svc.traffic)
+      .set(
+        JSON.stringify(
+          config.proxies.map((p) => ({
+            client_id: proxy_lists[0]!.client_id,
+            server_id: proxy_lists[0]!.server_id,
+            name: p.name,
+          }))
+        )
+      );
+
     // set traffic:{traffic_id}:conf -> Cached.TrafficConfig, with expire
-    // if already exists cached_conf, it will overwrite it
     await cache_key_conf.set(
       JSON.stringify({
         client_id: proxy_lists[0]!.client_id,
@@ -308,7 +324,7 @@ async function update_traffic_unsafe(node_name: string, service: Service) {
 
     const details = await wait_ready();
     if (!details) {
-      await delete_traffic(svc.traffic).catch(void 0);
+      await delete_traffic_unsafe(svc.traffic).catch(void 0);
       throw new HTTPException(503, { message: "cannot start traffic" });
     }
 
@@ -324,7 +340,6 @@ async function update_traffic_unsafe(node_name: string, service: Service) {
     }
 
     // set traffic:{traffic_id}:addr -> Cached.TrafficAddr, with expire
-    // if already exists cached_addr, it will overwrite it
     await cache_key_addr.set(
       JSON.stringify({
         remote_ports: occupied_ports,
@@ -341,9 +356,12 @@ export function update_traffic(node_name: string, service: Service) {
   return mutex_cache_w.runExclusive(() => update_traffic_unsafe(node_name, service));
 }
 
-export async function delete_traffic(traffic_id: string) {
+async function delete_traffic_unsafe(traffic_id: string) {
+  const cache_key_working = cache.at("working").at(traffic_id);
   const cache_key_conf = cache.at("traffic").at(traffic_id).at("conf");
   const cache_key_addr = cache.at("traffic").at(traffic_id).at("addr");
+  const cache_proxy_config_unique_keys =
+    (await cache_key_working.get())?.parseJSON<api.ProxyConfigUniqueKey[]>() ?? null;
   const cached_conf = (await cache_key_conf.get())?.parseJSON<Cached.TrafficConfig>() ?? null;
   const cached_addr = (await cache_key_addr.get())?.parseJSON<Cached.TrafficAddr>() ?? null;
 
@@ -352,27 +370,85 @@ export async function delete_traffic(traffic_id: string) {
     remote_addr: cached_addr?.remote_addr,
   };
 
+  const deleting_pools: Promise<unknown>[] = [];
+
   console.log(`Deleting traffic: ${traffic_id}`);
+  deleting_pools.push(
+    // delete traffic
+    cache_key_conf.del().catch(void 0),
+    cache_key_addr.del().catch(void 0)
+  );
   if (cached_conf && cached_addr) {
     const server_id = cached_conf.server_id;
     const remote_ports = cached_addr.remote_ports;
-    await Promise.all([
-      // delete traffic
-      cache_key_conf.del(),
-      cache_key_addr.del(),
+    deleting_pools.push(
       // delete all ports
-      ...remote_ports.map((port) => cache.at("port").at(server_id).at(port).del()),
-    ]);
-  } else {
-    await Promise.all([
-      // delete traffic
-      cache_key_conf.del(),
-      cache_key_addr.del(),
-      // we cannot infer cache key of ports, the cleanup ticker will help us delete traffic
-    ]);
+      ...remote_ports.map((port) => cache.at("port").at(server_id).at(port).del())
+    );
+  }
+  if (cache_proxy_config_unique_keys) {
+    deleting_pools.push(
+      // delete proxy config
+      ...cache_proxy_config_unique_keys.map((pk) => api.delete_proxy_config(pk).catch(void 0))
+    );
   }
 
+  await Promise.all(deleting_pools);
+
   return info;
+}
+
+export function delete_traffic(traffic_id: string) {
+  return mutex_cache_w.runExclusive(() => delete_traffic_unsafe(traffic_id));
+}
+
+/*=== Cleanup ===*/
+
+async function cleanup_dead_traffic() {
+  const all_working_keys = await cache.at("working").at("*").keys();
+  for (const working_key of all_working_keys) {
+    await mutex_cache_w.runExclusive(async () => {
+      const traffic_id = working_key.split(":").pop()!;
+      const cache_key_working = cache.at("working").at(traffic_id);
+      const cache_key_conf = cache.at("traffic").at(traffic_id).at("conf");
+      const cache_key_addr = cache.at("traffic").at(traffic_id).at("addr");
+      const proxy_config_unique_keys = (await cache_key_working.get())?.parseJSON<api.ProxyConfigUniqueKey[]>() ?? null;
+      if (proxy_config_unique_keys) {
+        // see if the traffic has been expired
+        const should_delete = !(await cache_key_conf.exists());
+        if (should_delete) {
+          console.log(
+            `Cleaning up dead traffic: ${[
+              `traffic_id=${traffic_id}`,
+              `client_id=${proxy_config_unique_keys[0]!.client_id}`,
+              `server_id=${proxy_config_unique_keys[0]!.server_id}`,
+              `name=${proxy_config_unique_keys.map((pk) => pk.name).join(",")}`,
+            ].join(", ")}`
+          );
+          await Promise.all([
+            // delete working
+            cache_key_working.del().catch(void 0),
+            // delete traffic
+            cache_key_conf.del().catch(void 0),
+            cache_key_addr.del().catch(void 0),
+            // delete proxy config
+            ...proxy_config_unique_keys.map((pk) => api.delete_proxy_config(pk).catch(void 0)),
+          ]);
+        }
+      } else {
+        // invalid working entry, just delete it
+        console.log(`Cleaning up dead traffic: ${[`traffic_id=${traffic_id}`].join(", ")}`);
+        await Promise.all([
+          // delete working
+          cache_key_working.del().catch(void 0),
+          // delete traffic
+          cache_key_conf.del().catch(void 0),
+          cache_key_addr.del().catch(void 0),
+        ]);
+      }
+    });
+    await sleep(5);
+  }
 }
 
 async function cleanup_dead_ports() {
@@ -383,38 +459,32 @@ async function cleanup_dead_ports() {
       const cache_key_port = cache.at("port").at(server_id).at(port_str);
       const traffic_id = await cache_key_port.get();
       if (traffic_id) {
-        const cache_key_conf = cache.at("traffic").at(traffic_id).at("conf");
-        const cache_key_addr = cache.at("traffic").at(traffic_id).at("addr");
-        // if exists cache_conf, it's valid
-        // only check if cache_conf exists
-        const should_delete = !(await cache_key_conf.exists());
+        const working_key = cache.at("working").at(traffic_id);
+        // if exists working:{traffic_id}, it means traffic is still working, do not delete port
+        const should_delete = !(await working_key.exists());
         if (should_delete) {
-          console.log(`Cleaning up dead port: server_id=${server_id}, port=${port_str}, traffic_id=${traffic_id}`);
-          await Promise.all([
-            // delete traffic
-            cache_key_conf.del(),
-            cache_key_addr.del(),
-            // delete port
-            cache_key_port.del(),
-          ]);
+          console.log(
+            `Cleaning up dead port: ${[`server_id=${server_id}`, `port=${port_str}`, `traffic_id=${traffic_id}`].join(", ")}`
+          );
+          await cache_key_port.del().catch(void 0);
         }
       } else {
         // invalid cache entry, just delete it
-        console.log(`Cleaning up invalid port entry: server_id=${server_id}, port=${port_str}`);
+        console.log(`Cleaning up invalid port entry: ${[`server_id=${server_id}`, `port=${port_str}`].join(", ")}`);
         await cache_key_port.del().catch(void 0);
       }
     });
-    await sleep(10);
+    await sleep(5);
   }
 }
 
-export async function start_cleanup_dead_ports() {
+async function cleanup_ticker(func: () => Promise<void>, delay: number = 0) {
   let last_cleanup_time = 0;
   const INTERVAL = CONFIG.app.cleanup_interval * 1000;
   const ticker = async () => {
     last_cleanup_time = Date.now();
     try {
-      await cleanup_dead_ports();
+      await func();
     } catch (e) {
       console.error("Error during cleanup:", e);
     }
@@ -422,5 +492,10 @@ export async function start_cleanup_dead_ports() {
     const next_tick = Math.max(0, INTERVAL - (Date.now() - last_cleanup_time));
     setTimeout(ticker, next_tick);
   };
-  setTimeout(ticker, 0);
+  setTimeout(ticker, delay);
+}
+
+export function cleanup() {
+  cleanup_ticker(cleanup_dead_traffic, 0).catch(console.error);
+  cleanup_ticker(cleanup_dead_ports, 2).catch(console.error);
 }

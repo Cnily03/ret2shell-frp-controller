@@ -175,7 +175,7 @@ export function create_proxy_config<T>(param: CreateConfigParam<T>) {
     .json<Wrap<{}>>();
 }
 
-interface ProxyConfigUniqueKey {
+export interface ProxyConfigUniqueKey {
   /**
    * should contains `@{user_id}`
    */

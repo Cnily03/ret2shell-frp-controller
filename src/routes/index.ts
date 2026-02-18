@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import z from "zod";
 import { auth } from "@/mw/auth";
-import { delete_traffic, schemaService, start_cleanup_dead_ports, update_traffic } from "@/traffic";
+import { cleanup, delete_traffic, schemaService, update_traffic } from "@/traffic";
 
 const app = new Hono();
 
@@ -46,6 +46,6 @@ app.onError((e, c) => {
   }
 });
 
-start_cleanup_dead_ports().catch(console.error);
+cleanup();
 
 export default app;
