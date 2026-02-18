@@ -3,6 +3,7 @@ import toml from "toml";
 
 export interface Config {
   app: {
+    port: number;
     auth_token: string;
     /**
      * in seconds

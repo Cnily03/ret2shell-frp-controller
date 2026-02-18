@@ -45,3 +45,5 @@ app.onError((e, c) => {
     return c.text("internal server error", 500);
   }
 });
+
+export default app;
