@@ -4,12 +4,12 @@ import z from "zod";
 import type { CreateConfigParam } from "@/api";
 import * as api from "@/api";
 import { Cache } from "@/cache";
-import config from "@/config";
+import CONFIG from "@/config";
 import { normalize_service, sleep, to_camel } from "./utils";
 
 const nanoid = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 21);
 
-const cache = new Cache(config.cache.url);
+const cache = new Cache(CONFIG.cache.url);
 
 // port:{server_id}:{port} -> traffic_id
 // traffic:{traffic_id}:conf -> { client_id, server_id, config }
@@ -198,11 +198,9 @@ export const schemaService = z.object({
 async function update_traffic_unsafe(node_name: string, service: Service) {
   const svc = normalize_service(service);
 
-  const SERVER_ID_PREFIX = `${config.master.username}.s`;
-  const CLIENT_ID = `${config.master.username}.c.${node_name}`;
+  const SERVER_ID_PREFIX = `${CONFIG.master.username}.s`;
+  const CLIENT_ID = `${CONFIG.master.username}.c.${node_name}`;
   const NAME_PREFIX = `ret2shell:${svc.traffic}`;
-  const server_config = config.server.find((s) => s.node_name === node_name);
-  if (!server_config) throw new Error(`No config found for server: node_name: ${node_name}`);
 
   const cache_key_conf = cache.at("traffic").at(svc.traffic).at("conf");
   const cache_key_addr = cache.at("traffic").at(svc.traffic).at("addr");
@@ -220,9 +218,13 @@ async function update_traffic_unsafe(node_name: string, service: Service) {
   } else {
     // create new
 
-    const server_id = await api.list_all_servers(SERVER_ID_PREFIX);
-    if (!server_id.length) throw new Error("No available frp server found");
-    const picked_server_id = server_id[Math.floor(Math.random() * server_id.length)]!.id;
+    const servers = (await api.list_all_servers(SERVER_ID_PREFIX)).filter((s) =>
+      // should in the config
+      CONFIG.server.some((sc) => `${SERVER_ID_PREFIX}.${sc.node_name}` === s.id)
+    );
+    if (!servers.length) throw new Error("No available frp server found");
+    const picked_server_id = servers[Math.floor(Math.random() * servers.length)]!.id;
+    const server_config = CONFIG.server.find((sc) => `${SERVER_ID_PREFIX}.${sc.node_name}` === picked_server_id)!;
     const ctx = {
       node_name,
       traffic_id: svc.traffic,
@@ -382,7 +384,7 @@ async function cleanup_dead_ports() {
 
 export async function start_cleanup_dead_ports() {
   let last_cleanup_time = 0;
-  const INTERVAL = config.app.cleanup_interval * 1000;
+  const INTERVAL = CONFIG.app.cleanup_interval * 1000;
   const ticker = async () => {
     last_cleanup_time = Date.now();
     try {
