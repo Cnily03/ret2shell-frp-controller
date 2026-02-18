@@ -1,0 +1,20 @@
+[app]
+auth_token = "sample"
+# in seconds
+cleanup_interval = 60
+
+[cache]
+enable = true
+url    = 'redis://localhost:6379'
+
+[master]
+api_base = "https://frpp.ctf.bxs.team/api"
+username = "admin"
+password = "password"
+
+[[server]]
+# the client id would be `<username>.c.<node_name>
+# the server id would be `<username>.c.<node_name>
+node_name   = "yaemiko"
+port_range  = [50000, 52767]
+remote_addr = "yaemiko.node.bxs.team"

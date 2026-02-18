@@ -1,8 +1,0 @@
-[cache]
-enable = true
-url = 'redis://localhost:6379'
-
-[master]
-api_base = "https://frpp.ctf.bxs.team/api"
-username = "admin"
-password = "password"

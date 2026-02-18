@@ -2,6 +2,7 @@ import { Base64 } from "js-base64";
 import ky from "ky";
 import config from "@/config";
 import { Cache } from "./cache";
+import { to_camel } from "./utils";
 
 const cache = new Cache(config.cache.url);
 
@@ -73,6 +74,9 @@ export interface Client {
   comment: string;
   server_id: string;
   stopped: boolean;
+  /**
+   * contains `@{user_id}` for unique identification
+   */
   client_ids: string[];
   ephemeral: boolean;
   last_seen_at: number;
@@ -102,22 +106,22 @@ export function list_servers(param: ListParam = {}) {
     .json<Wrap<{ total: number; servers: Server[] }>>();
 }
 
-export async function list_all_ervers(keyword = "") {
+export async function list_all_servers(keyword = "") {
   let page = 1;
   const page_size = 100;
   let total = 0;
-  const allServers: Server[] = [];
+  const result: Server[] = [];
   do {
     const res = await list_servers({ page, page_size, keyword });
     if (res.code === 200) {
       total = res.body.total;
-      allServers.push(...res.body.servers);
+      result.push(...res.body.servers);
       page++;
     } else {
       break;
     }
-  } while (allServers.length < total);
-  return allServers;
+  } while (result.length < total);
+  return result;
 }
 
 export function list_clients(param: ListParam = {}) {
@@ -133,23 +137,26 @@ export async function list_all_clients(keyword = "") {
   let page = 1;
   const page_size = 100;
   let total = 0;
-  const allClients: Client[] = [];
+  const result: Client[] = [];
   do {
     const res = await list_clients({ page, page_size, keyword });
     if (res.code === 200) {
       total = res.body.total;
-      allClients.push(...res.body.clients);
+      result.push(...res.body.clients);
       page++;
     } else {
       break;
     }
-  } while (allClients.length < total);
-  return allClients;
+  } while (result.length < total);
+  return result;
 }
 
-interface CreateConfigParam<T> {
+export interface CreateConfigParam<T> {
   client_id: string;
   server_id: string;
+  /**
+   * camel case
+   */
   config: T;
   overwrite?: boolean;
 }
@@ -162,7 +169,7 @@ export function create_proxy_config<T>(param: CreateConfigParam<T>) {
         clientId: param.client_id,
         serverId: param.server_id,
         config: configBase64,
-        overwrite: param.overwrite || true,
+        overwrite: param.overwrite,
       },
     })
     .json<Wrap<{}>>();
@@ -180,7 +187,7 @@ interface ProxyConfigUniqueKey {
 export function delete_proxy_config(params: ProxyConfigUniqueKey) {
   return api
     .post("v1/proxy/delete_config", {
-      json: { clientId: params.client_id, serverId: params.server_id, name: params.name },
+      json: to_camel(params),
     })
     .json<Wrap<{}>>();
 }
@@ -189,6 +196,9 @@ interface ProxyConfig {
   id: number;
   name: string;
   type: string;
+  /**
+   * should contains `@{user_id}` for unique identification
+   */
   client_id: string;
   server_id: string;
   config: string;
@@ -199,10 +209,26 @@ interface ProxyConfig {
 export function list_proxy_configs(param: ListParam = {}) {
   const json = Object.assign({ page: 1, page_size: 8, keyword: "" }, param);
   return api
-    .post("v1/proxy/list_configs", {
-      json: { page: json.page, pageSize: json.page_size, keyword: json.keyword },
-    })
+    .post("v1/proxy/list_configs", { json: to_camel(json) })
     .json<Wrap<{ total: number; proxy_configs: ProxyConfig[] }>>();
+}
+
+export async function list_all_proxy_configs(keyword = "") {
+  let page = 1;
+  const page_size = 100;
+  let total = 0;
+  const result: ProxyConfig[] = [];
+  do {
+    const res = await list_proxy_configs({ page, page_size, keyword });
+    if (res.code === 200) {
+      total = res.body.total;
+      result.push(...res.body.proxy_configs);
+      page++;
+    } else {
+      break;
+    }
+  } while (result.length < total);
+  return result;
 }
 
 export interface WorkingStatus {
@@ -213,10 +239,8 @@ export interface WorkingStatus {
   remote_addr: string;
 }
 
-export function get_proxy_config(client_id: string, server_id: string, name: string) {
+export function get_proxy_config(param: ProxyConfigUniqueKey) {
   return api
-    .post("v1/proxy/get_config", {
-      json: { clientId: client_id, serverId: server_id, name },
-    })
+    .post("v1/proxy/get_config", { json: to_camel(param) })
     .json<Wrap<{ proxy_config: ProxyConfig; working_status: WorkingStatus }>>();
 }

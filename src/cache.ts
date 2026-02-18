@@ -71,6 +71,18 @@ export class CacheKey {
   }
 
   /**
+   * Get keys that match the pattern of the constructed key with a wildcard.
+   */
+  async keys(): Promise<string[]> {
+    const conn = await this.client.conn();
+    if (conn) {
+      const pattern = this.build_key();
+      return await conn.keys(pattern);
+    }
+    return [];
+  }
+
+  /**
    * Delete the cache entry for the constructed key.
    */
   async del(): Promise<void> {
