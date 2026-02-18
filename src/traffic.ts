@@ -34,7 +34,7 @@ namespace Cached {
   }
   export interface TrafficAddr {
     remote_ports: number[];
-    remote_addr: string[];
+    remote_addr: Record<string, string>; // name:port/service_type -> remote_addr
   }
 }
 
@@ -141,7 +141,7 @@ async function gen_config_proxies(
     remote_ports = await get_available_ports(ctx.server_id, ctx.port_range, need_ports.length);
   }
   for (const port_info of ports) {
-    const name = `${name_prefix}:${port_info.node_port}`;
+    const name = `${name_prefix}:${port_info.name}:${port_info.node_port}/${port_info.service_type}`;
     if (port_info.service_type === "http") {
       const prefix = ctx.node_name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase();
       const subdomain = `${prefix}-${nanoid()}`;
@@ -285,12 +285,16 @@ async function update_traffic_unsafe(node_name: string, service: Service) {
       )
     );
 
-    const remote_addr = details.map((detail) => {
+    const remote_addr = new Map<string, string>(); // name:port/service_type -> remote_addr
+
+    for (const detail of details) {
+      const port_key = detail.working_status.name.split(":").slice(-2).join(":");
       if (detail.working_status.type === "http") {
-        return detail.working_status.remote_addr;
+        remote_addr.set(port_key, detail.working_status.remote_addr);
+      } else {
+        remote_addr.set(port_key, `${server_config.remote_addr}:${detail.working_status.remote_addr.split(":").pop()}`);
       }
-      return `${server_config.remote_addr}${detail.working_status.remote_addr.split(":").pop()}`;
-    });
+    }
 
     // set traffic:{traffic_id}:addr -> Cached.TrafficAddr, with expire
     // if already exists cached_addr, it will overwrite it
@@ -302,7 +306,7 @@ async function update_traffic_unsafe(node_name: string, service: Service) {
       delta_now(SVC_EXPIRE_AT)
     );
 
-    return remote_addr;
+    return Object.fromEntries(remote_addr.entries());
   }
 }
 
