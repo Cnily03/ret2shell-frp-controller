@@ -10,7 +10,7 @@ COPY package.json .
 COPY pnpm-lock.yaml .
 
 ARG REGISTRY_URL
-RUN [ -n "$REGISTRY_URL" ] && pnpm config set registry "$REGISTRY_URL"
+RUN if [ -n "$REGISTRY_URL" ]; then pnpm config set registry $REGISTRY_URL; fi
 
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --prod --frozen-lockfile
 
