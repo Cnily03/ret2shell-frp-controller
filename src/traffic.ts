@@ -217,6 +217,9 @@ async function update_traffic_unsafe(node_name: string, service: Service) {
   if (cached_conf && cached_addr) {
     // update expire time
     const delta = delta_now(SVC_EXPIRE_AT);
+    console.info(
+      `Updating expire time for traffic: ${[`traffic_id=${svc.traffic}`, `client_id=${cached_conf.client_id}`, `server_id=${cached_conf.server_id}`, `expire_at=${new Date(SVC_EXPIRE_AT * 1000).toISOString()}`].join(", ")}`
+    );
     await Promise.all([cache_key_conf.expire(delta), cache_key_addr.expire(delta)]);
 
     return cached_addr.remote_addr;
