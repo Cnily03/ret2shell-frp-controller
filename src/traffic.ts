@@ -343,15 +343,16 @@ async function update_traffic_unsafe(node_name: string, service: Service) {
     }
 
     // set traffic:{traffic_id}:addr -> Cached.TrafficAddr, with expire
+    const remote_addr_json = Object.fromEntries(remote_addr.entries());
     await cache_key_addr.set(
       JSON.stringify({
         remote_ports: occupied_ports,
-        remote_addr,
+        remote_addr: remote_addr_json,
       }),
       delta_now(SVC_EXPIRE_AT)
     );
 
-    return Object.fromEntries(remote_addr.entries());
+    return remote_addr_json;
   }
 }
 
