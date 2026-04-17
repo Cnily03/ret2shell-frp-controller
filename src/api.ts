@@ -210,7 +210,7 @@ export function list_proxy_configs(param: ListParam = {}) {
   const json = Object.assign({ page: 1, page_size: 8, keyword: "" }, param);
   return api
     .post("v1/proxy/list_configs", { json: to_camel(json) })
-    .json<Wrap<{ total: number; proxy_configs: ProxyConfig[] }>>();
+    .json<Wrap<{ total: number; proxy_configs?: ProxyConfig[] }>>();
 }
 
 export async function list_all_proxy_configs(keyword = "") {
@@ -222,7 +222,7 @@ export async function list_all_proxy_configs(keyword = "") {
     const res = await list_proxy_configs({ page, page_size, keyword });
     if (res.code === 200) {
       total = res.body.total;
-      result.push(...res.body.proxy_configs);
+      result.push(...(res.body.proxy_configs ?? []));
       page++;
     } else {
       break;
