@@ -259,7 +259,15 @@ async function update_traffic_unsafe(node_name: string, service: Service) {
           `ports=${service.ports.map((p) => `${p.node_port}/${p.service_type}`).join(",")}`,
         ].join(", ")}`
       );
-      await api.create_proxy_config(create_params).catch(void 0);
+      for (const proxy of proxies) {
+        const create_params_one: CreateConfigParam<Cached.TrafficConfig["config"]> = {
+          client_id: CLIENT_ID,
+          server_id: picked_server_id,
+          config: to_camel({ proxies: [proxy] }),
+          overwrite: false,
+        };
+        await api.create_proxy_config(create_params_one).catch(void 0);
+      }
 
       // occupy ports
       const occupied_ports = proxies
